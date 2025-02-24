@@ -1,0 +1,79 @@
+trigger:
+- main
+
+pool:
+  name: myagent-vm
+  demands:
+    - agent.name -equals vm-runner
+
+variables:
+  - group: "MyVariableGroup"
+
+stages:
+- stage: Build
+  displayName: 'Build Stage'
+  jobs:
+    - job: Build
+      steps:
+
+      - script: |
+          echo "##vso[task.setvariable variable=LD_LIBRARY_PATH;]:/home/denis/myagent/_work/_tool/Python/3.11.11/x64/lib/"
+        displayName: 'Set LD_LIBRARY_PATH'
+
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.11.11'
+          addToPath: true
+
+      - script: |
+          sudo apt update
+          sudo apt install -y libselinux1-dev build-essential zip
+        displayName: 'Install system dependencies'
+
+      - script: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+        displayName: 'Install dependencies'
+
+      - task: ArchiveFiles@2
+        displayName: 'Archive Flask app'
+        inputs:
+          rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+          includeRootFolder: false
+          archiveType: 'zip'
+          archiveFile: '$(Build.ArtifactStagingDirectory)/flask-app.zip'
+          replaceExistingArchive: true
+  
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish artifacts'
+        inputs:
+          pathToPublish: '$(Build.ArtifactStagingDirectory)'
+          artifactName: 'flask-app'
+          publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: 'Deploy Stage'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: DeployJob
+    displayName: 'Deploy to Azure Web App'
+    steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download build artifacts'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'flask-app'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: AzureWebApp@1
+      displayName: 'Deploy to Azure Web App'
+      inputs:
+        azureSubscription: 'denistestwebapp'
+        appType: 'webAppLinux'
+        appName: 'denistestwebapp'
+        package: '$(System.DefaultWorkingDirectory)/flask-app/flask-app.zip'
+        runtimeStack: 'PYTHON|3.11'
